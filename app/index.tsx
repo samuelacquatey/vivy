@@ -34,10 +34,10 @@ export const NoteTakingSpace: React.FC = () => {
 
   // Lock orientation on mount
   useEffect(() => {
-    async function lockOrientation() {
+    async function changeScreenOrientation() {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.ALL);
     }
-    lockOrientation();
+    changeScreenOrientation();
     return () => {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.DEFAULT);
     };
@@ -70,10 +70,6 @@ export const NoteTakingSpace: React.FC = () => {
       const newPath = Skia.Path.Make();
       newPath.moveTo(locationX, locationY);
       setCurrentPath(newPath);
-      setStartPosition({ x: locationX, y: locationY });
-      if (ocrTimeoutRef.current) {
-        clearTimeout(ocrTimeoutRef.current); // cancel OCR if user starts writing again
-      }
     },
     onPanResponderMove: (event) => {
       if (currentPath) {
@@ -155,9 +151,9 @@ export const NoteTakingSpace: React.FC = () => {
     } catch (error) {
       console.log("Error saving image:", error);
       return null;
-    } finally {
-      setShowRecognizedText(true); // show text again
     }
+
+    return filePath;
   };
 
 
@@ -204,13 +200,6 @@ export const NoteTakingSpace: React.FC = () => {
     }
   };
 
-  const clearCanvas = () => {
-    setPaths([]);
-    setRecognizedTextLines([]);
-    setStartPosition(null);
-    if (ocrTimeoutRef.current) clearTimeout(ocrTimeoutRef.current);
-  };
-
   return (
     <View style={styles.container}>
       <View style={styles.canvasContainer} {...panResponder.panHandlers}>
@@ -236,6 +225,8 @@ export const NoteTakingSpace: React.FC = () => {
       </View>
       {/* Drawing control buttons */}
       <View style={styles.buttons}>
+        <Button title="Undo" onPress={undoLastPath} />
+        <Button title="Redo" onPress={redoLastPath} />
         <Button title="Clear" onPress={clearCanvas} />
         <Button title="Recognize Text" onPress={recognizeTextWithGoogleOCR} />
         <Button title="Share Image" onPress={shareImage} />
@@ -243,6 +234,7 @@ export const NoteTakingSpace: React.FC = () => {
       {/* Display captured image if available */}
       {capturedImageUri && <Image source={{ uri: capturedImageUri }} style={styles.capturedImage} />}
       {isProcessing && <ActivityIndicator size="large" color="blue" />}
+      {recognizedText ? <Text style={styles.textOutput}>{recognizedText}</Text> : null}
     </View>
   );
 };
@@ -271,4 +263,19 @@ const styles = StyleSheet.create({
     width: "100%",
     padding: 10,
   },
+<<<<<<< HEAD
 });
+=======
+  capturedImage: {
+    width: 300,
+    height: 300,
+    marginVertical: 10,
+  },
+  textOutput: {
+    marginTop: 10,
+    padding: 10,
+    fontSize: 16,
+    textAlign: "center",
+  },
+});
+>>>>>>> parent of 21906e6 (the app text insertion part is messing up)
