@@ -9,12 +9,19 @@ import {
   Image,
   PanResponder,
 } from "react-native";
-import { Canvas, Skia, Path, useCanvasRef, Text as SkiaText, Fill, useFont} from "@shopify/react-native-skia";
+import {
+  Canvas,
+  Skia,
+  Path,
+  useCanvasRef,
+  Text as SkiaText,
+  Fill,
+  useFont,
+} from "@shopify/react-native-skia";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import axios from "axios";
 import * as ScreenOrientation from "expo-screen-orientation";
-import { PanResponder } from "react-native";
 import { API_KEY } from "../config";
 
 export const NoteTakingSpace: React.FC = () => {
@@ -25,14 +32,12 @@ export const NoteTakingSpace: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<Path | null>(null);
   const canvasRef = useRef<useCanvasRef>(null);
   const [lastTouch, setLastTouch] = useState<{ x: number; y: number } | null>(null);
-  const font = useFont(require("../assets/fonts/QEMamasAndPapas.ttf"), 30); 
+  const [capturedImageUri, setCapturedImageUri] = useState<string | null>(null); // ✅ Added
+  const font = useFont(require("../assets/fonts/SpaceMono-Regular.ttf"), 30);
   const [showRecognizedText, setShowRecognizedText] = useState(true);
-  const googleApiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
 
-  // Debounce timer ref for auto OCR recognition.
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Lock orientation on mount
   useEffect(() => {
     async function changeScreenOrientation() {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.ALL);
@@ -43,25 +48,30 @@ export const NoteTakingSpace: React.FC = () => {
     };
   }, []);
 
-  // Auto-trigger OCR recognition after drawing stops (debounce)
   useEffect(() => {
-    // Clear any previous timer if exists
     if (typingTimerRef.current) {
       clearTimeout(typingTimerRef.current);
     }
-    // If there are strokes, set a timeout to process OCR after a pause (e.g., 1000ms)
     if (paths.length > 0) {
       typingTimerRef.current = setTimeout(() => {
         recognizeTextWithGoogleOCR();
-      }, 1000); // adjust delay as needed
+      }, 1000);
     }
-    // Cleanup on unmount or paths change
     return () => {
       if (typingTimerRef.current) {
         clearTimeout(typingTimerRef.current);
       }
     };
   }, [paths]);
+
+  const shareImage = async () => {
+    const filePath = await captureCanvas();
+    if (filePath && (await Sharing.isAvailableAsync())) {
+      await Sharing.shareAsync(filePath);
+    } else {
+      Alert.alert("Error", "Sharing is not available on this device or capture failed.");
+    }
+  };
 
   const panResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -81,17 +91,13 @@ export const NoteTakingSpace: React.FC = () => {
     },
     onPanResponderRelease: (event) => {
       const { locationX, locationY } = event.nativeEvent;
-    
-      // Save position for OCR placement
       setLastTouch({ x: locationX, y: locationY });
-    
       if (currentPath) {
         setPaths((prev) => [...prev, currentPath]);
         setRedoStack([]);
       }
       setCurrentPath(null);
     },
-    
   });
 
   const undoLastPath = () => {
@@ -112,26 +118,17 @@ export const NoteTakingSpace: React.FC = () => {
     setPaths([]);
     setCurrentPath(null);
     setRedoStack([]);
-    setRecognizedText(""); 
+    setRecognizedText("");
+    setCapturedImageUri(null); // optional cleanup
   };
-  
+
   const captureCanvas = async (): Promise<string | null> => {
-    setShowRecognizedText(false); // temporarily hide text
-  
-    await new Promise((resolve) => setTimeout(resolve, 100)); // let UI update
-  
+    setShowRecognizedText(false);
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const snapshot = canvasRef.current?.makeImageSnapshot();
-  
-    setShowRecognizedText(true); // show text again
+    setShowRecognizedText(true);
 
- 
-    if (!canvasRef.current) {
-      console.log("Error: canvasRef is null");
-      return null;
-    }
-
-  
-    if (!snapshot) {
+    if (!canvasRef.current || !snapshot) {
       Alert.alert("Error", "Failed to capture drawing");
       return null;
     }
@@ -143,11 +140,11 @@ export const NoteTakingSpace: React.FC = () => {
     }
 
     const filePath = `${FileSystem.documentDirectory}handwriting_${Date.now()}.png`;
-    console.log("Saving image to:", filePath);
     try {
       await FileSystem.writeAsStringAsync(filePath, base64Data, {
         encoding: FileSystem.EncodingType.Base64,
       });
+      setCapturedImageUri(filePath); // ✅ Save for display
     } catch (error) {
       console.log("Error saving image:", error);
       return null;
@@ -156,16 +153,15 @@ export const NoteTakingSpace: React.FC = () => {
     return filePath;
   };
 
-
   const recognizeTextWithGoogleOCR = async (): Promise<void> => {
     setIsProcessing(true);
     setRecognizedText("");
 
     try {
-      const filePath: string | null = await captureCanvas();
+      const filePath = await captureCanvas();
       if (!filePath) throw new Error("Image capture failed");
 
-      const base64Image: string = await FileSystem.readAsStringAsync(filePath, {
+      const base64Image = await FileSystem.readAsStringAsync(filePath, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
@@ -175,20 +171,18 @@ export const NoteTakingSpace: React.FC = () => {
             image: { content: base64Image },
             features: [{ type: "TEXT_DETECTION" }],
             imageContext: {
-              languageHints: ["en"], // 👈 Specifies only English
+              languageHints: ["en"],
             },
           },
         ],
       };
-      console.log("Sending OCR request to Google Vision API...");
 
       const response = await axios.post(
         `https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`,
         requestBody
       );
-      console.log("OCR Response received:", JSON.stringify(response.data, null, 2));
 
-      const text: string =
+      const text =
         response.data.responses[0]?.fullTextAnnotation?.text || "No text recognized";
       setRecognizedText(text);
     } catch (error) {
@@ -196,7 +190,6 @@ export const NoteTakingSpace: React.FC = () => {
       Alert.alert("Error", "Failed to recognize handwriting");
     } finally {
       setIsProcessing(false);
-      console.log("OCR process completed.");
     }
   };
 
@@ -204,7 +197,6 @@ export const NoteTakingSpace: React.FC = () => {
     <View style={styles.container}>
       <View style={styles.canvasContainer} {...panResponder.panHandlers}>
         <Canvas style={styles.canvas} ref={canvasRef}>
-          {/* Add white background */}
           <Fill color="white" />
           {paths.map((path, index) => (
             <Path key={index} path={path} color="black" style="stroke" strokeWidth={2} />
@@ -212,10 +204,10 @@ export const NoteTakingSpace: React.FC = () => {
           {currentPath && (
             <Path path={currentPath} color="black" style="stroke" strokeWidth={2} />
           )}
-          {recognizedText && lastTouch && font &&(
+          {recognizedText && lastTouch && font && (
             <SkiaText
               x={lastTouch.x}
-              y={lastTouch.y - 75} // ≈2cm above last touch
+              y={lastTouch.y - 75}
               text={recognizedText}
               font={font}
               color="black"
@@ -223,7 +215,7 @@ export const NoteTakingSpace: React.FC = () => {
           )}
         </Canvas>
       </View>
-      {/* Drawing control buttons */}
+
       <View style={styles.buttons}>
         <Button title="Undo" onPress={undoLastPath} />
         <Button title="Redo" onPress={redoLastPath} />
@@ -231,8 +223,10 @@ export const NoteTakingSpace: React.FC = () => {
         <Button title="Recognize Text" onPress={recognizeTextWithGoogleOCR} />
         <Button title="Share Image" onPress={shareImage} />
       </View>
-      {/* Display captured image if available */}
-      {capturedImageUri && <Image source={{ uri: capturedImageUri }} style={styles.capturedImage} />}
+
+      {capturedImageUri && (
+        <Image source={{ uri: capturedImageUri }} style={styles.capturedImage} />
+      )}
       {isProcessing && <ActivityIndicator size="large" color="blue" />}
       {recognizedText ? <Text style={styles.textOutput}>{recognizedText}</Text> : null}
     </View>
@@ -251,7 +245,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: "100%",
     height: 400,
-    backgroundColor: "white", // Fallback for non-Skia rendering
+    backgroundColor: "white",
   },
   canvas: {
     flex: 1,
@@ -263,9 +257,6 @@ const styles = StyleSheet.create({
     width: "100%",
     padding: 10,
   },
-<<<<<<< HEAD
-});
-=======
   capturedImage: {
     width: 300,
     height: 300,
@@ -278,4 +269,3 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
->>>>>>> parent of 21906e6 (the app text insertion part is messing up)
